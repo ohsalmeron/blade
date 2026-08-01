@@ -130,6 +130,9 @@ struct PipelineInner {
     group_mappings: Box<[ShaderDataMapping]>,
     vertex_attribute_infos: Box<[VertexAttributeInfo]>,
     color_targets: Box<[(Option<crate::BlendState>, crate::ColorWrites)]>,
+    depth_stencil: Option<crate::DepthStencilState>,
+    cull_mode: Option<crate::Face>,
+    front_face: crate::FrontFace,
 }
 
 pub struct ComputePipeline {
@@ -325,6 +328,11 @@ enum Command {
     //ConfigureDepthStencil(crate::FormatAspects),
     SetProgram(glow::Program),
     UnsetProgram,
+    SetPipelineState {
+        depth_stencil: Option<crate::DepthStencilState>,
+        cull_mode: Option<crate::Face>,
+        front_face: crate::FrontFace,
+    },
     //SetPrimitive(PrimitiveState),
     SetBlendConstant([f32; 4]),
     SetColorTarget {
@@ -422,6 +430,8 @@ pub struct PipelineEncoder<'a> {
     topology: u32,
     limits: &'a Limits,
     vertex_attributes: &'a [VertexAttributeInfo],
+    stencil_compare: u32,
+    stencil_read_mask: u32,
 }
 
 impl Drop for PipelineEncoder<'_> {

@@ -315,6 +315,8 @@ impl super::PassEncoder<'_, super::ComputePipeline> {
             topology: 0,
             limits: self.limits,
             vertex_attributes: &[],
+            stencil_compare: glow::ALWAYS,
+            stencil_read_mask: u32::MAX,
         }
     }
 }
@@ -352,6 +354,12 @@ impl super::PassEncoder<'_, super::RenderPipeline> {
     ) -> super::PipelineEncoder<'b> {
         self.commands
             .push(super::Command::SetProgram(pipeline.inner.program));
+        self.commands
+            .push(super::Command::SetPipelineState {
+                depth_stencil: pipeline.inner.depth_stencil.clone(),
+                cull_mode: pipeline.inner.cull_mode,
+                front_face: pipeline.inner.front_face,
+            });
 
         match &pipeline.inner.color_targets[..] {
             &[(blend_state, write_masks)] => self
@@ -363,6 +371,17 @@ impl super::PassEncoder<'_, super::RenderPipeline> {
                 },
             )),
         }
+        let (stencil_compare, stencil_read_mask) = pipeline
+            .inner
+            .depth_stencil
+            .as_ref()
+            .map(|ds| {
+                (
+                    map_compare_function(ds.stencil.front.compare),
+                    ds.stencil.read_mask,
+                )
+            })
+            .unwrap_or((glow::ALWAYS, u32::MAX));
         super::PipelineEncoder {
             commands: self.commands,
             plain_data: self.plain_data,
@@ -370,6 +389,8 @@ impl super::PassEncoder<'_, super::RenderPipeline> {
             topology: map_primitive_topology(pipeline.topology),
             limits: self.limits,
             vertex_attributes: &pipeline.inner.vertex_attribute_infos,
+            stencil_compare,
+            stencil_read_mask,
         }
     }
 }
@@ -504,8 +525,14 @@ impl crate::traits::RenderEncoder for super::PipelineEncoder<'_> {
             .push(super::Command::SetViewport(viewport.clone()));
     }
 
-    fn set_stencil_reference(&mut self, _reference: u32) {
-        unimplemented!()
+    fn set_stencil_reference(&mut self, reference: u32) {
+        self.commands
+            .push(super::Command::SetStencilFunc {
+                face: glow::FRONT_AND_BACK,
+                function: self.stencil_compare,
+                reference,
+                read_mask: self.stencil_read_mask,
+            });
     }
 }
 
@@ -1142,16 +1169,18 @@ impl super::Command {
                     gl.scissor(rect.x, rect.y, rect.w as i32, rect.h as i32);
                 }
                 Self::SetStencilFunc {
-                    face: _,
-                    function: _,
-                    reference: _,
-                    read_mask: _,
-                } => unimplemented!(),
+                    face,
+                    function,
+                    reference,
+                    read_mask,
+                } => gl.stencil_func_separate(face, function, reference as i32, read_mask),
                 Self::SetStencilOps {
-                    face: _,
-                    write_mask: _,
+                    face,
+                    write_mask,
                     //ops: crate::StencilOps,
-                } => unimplemented!(),
+                } => {
+                    gl.stencil_mask_separate(face, write_mask);
+                }
                 //SetDepth(DepthState),
                 //SetDepthBias(wgt::DepthBiasState),
                 //ConfigureDepthStencil(crate::FormatAspects),
@@ -1160,6 +1189,81 @@ impl super::Command {
                 }
                 Self::UnsetProgram => {
                     gl.use_program(None);
+                }
+                Self::SetPipelineState {
+                    ref depth_stencil,
+                    cull_mode,
+                    front_face,
+                } => {
+                    match *depth_stencil {
+                        Some(ref ds) => {
+                            gl.enable(glow::DEPTH_TEST);
+                            gl.depth_func(map_compare_function(ds.depth_compare));
+                            gl.depth_mask(ds.depth_write_enabled);
+                            if ds.bias.constant != 0 || ds.bias.slope_scale != 0.0 {
+                                gl.enable(glow::POLYGON_OFFSET_FILL);
+                                gl.polygon_offset(ds.bias.slope_scale, ds.bias.constant as f32);
+                            } else {
+                                gl.disable(glow::POLYGON_OFFSET_FILL);
+                            }
+                            if ds.stencil.front == crate::StencilFaceState::IGNORE
+                                && ds.stencil.back == crate::StencilFaceState::IGNORE
+                            {
+                                gl.disable(glow::STENCIL_TEST);
+                            } else {
+                                gl.enable(glow::STENCIL_TEST);
+                                let front = &ds.stencil.front;
+                                gl.stencil_func_separate(
+                                    glow::FRONT,
+                                    map_compare_function(front.compare),
+                                    0,
+                                    ds.stencil.read_mask,
+                                );
+                                gl.stencil_op_separate(
+                                    glow::FRONT,
+                                    map_stencil_op(front.fail_op),
+                                    map_stencil_op(front.depth_fail_op),
+                                    map_stencil_op(front.pass_op),
+                                );
+                                let back = &ds.stencil.back;
+                                gl.stencil_func_separate(
+                                    glow::BACK,
+                                    map_compare_function(back.compare),
+                                    0,
+                                    ds.stencil.read_mask,
+                                );
+                                gl.stencil_op_separate(
+                                    glow::BACK,
+                                    map_stencil_op(back.fail_op),
+                                    map_stencil_op(back.depth_fail_op),
+                                    map_stencil_op(back.pass_op),
+                                );
+                            }
+                            gl.stencil_mask_separate(glow::FRONT, ds.stencil.write_mask);
+                            gl.stencil_mask_separate(glow::BACK, ds.stencil.write_mask);
+                        }
+                        None => {
+                            gl.disable(glow::DEPTH_TEST);
+                            gl.disable(glow::STENCIL_TEST);
+                            gl.disable(glow::POLYGON_OFFSET_FILL);
+                        }
+                    }
+                    match cull_mode {
+                        Some(face) => {
+                            gl.enable(glow::CULL_FACE);
+                            gl.cull_face(if face == crate::Face::Front {
+                                glow::FRONT
+                            } else {
+                                glow::BACK
+                            });
+                            gl.front_face(if front_face == crate::FrontFace::Ccw {
+                                glow::CCW
+                            } else {
+                                glow::CW
+                            });
+                        }
+                        None => gl.disable(glow::CULL_FACE),
+                    }
                 }
                 //SetPrimitive(PrimitiveState),
                 Self::SetBlendConstant([r, g, b, a]) => gl.blend_color(r, g, b, a),
@@ -1282,5 +1386,33 @@ fn map_primitive_topology(topology: crate::PrimitiveTopology) -> u32 {
         Pt::LineStrip => glow::LINE_STRIP,
         Pt::TriangleList => glow::TRIANGLES,
         Pt::TriangleStrip => glow::TRIANGLE_STRIP,
+    }
+}
+
+fn map_compare_function(fun: crate::CompareFunction) -> u32 {
+    use crate::CompareFunction as Cf;
+    match fun {
+        Cf::Never => glow::NEVER,
+        Cf::Less => glow::LESS,
+        Cf::Equal => glow::EQUAL,
+        Cf::LessEqual => glow::LEQUAL,
+        Cf::Greater => glow::GREATER,
+        Cf::NotEqual => glow::NOTEQUAL,
+        Cf::GreaterEqual => glow::GEQUAL,
+        Cf::Always => glow::ALWAYS,
+    }
+}
+
+fn map_stencil_op(op: crate::StencilOperation) -> u32 {
+    use crate::StencilOperation as So;
+    match op {
+        So::Keep => glow::KEEP,
+        So::Zero => glow::ZERO,
+        So::Replace => glow::REPLACE,
+        So::Invert => glow::INVERT,
+        So::IncrementClamp => glow::INCR,
+        So::DecrementClamp => glow::DECR,
+        So::IncrementWrap => glow::INCR_WRAP,
+        So::DecrementWrap => glow::DECR_WRAP,
     }
 }

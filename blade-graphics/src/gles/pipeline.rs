@@ -353,6 +353,9 @@ impl super::Context {
                 group_mappings,
                 vertex_attribute_infos: attributes.into_boxed_slice(),
                 color_targets: Box::new([]),
+                depth_stencil: None,
+                cull_mode: None,
+                front_face: crate::FrontFace::Ccw,
             }
         }
     }
@@ -421,6 +424,9 @@ impl crate::traits::ShaderDevice for super::Context {
         };
 
         inner.color_targets = conflate(desc.color_targets.iter().map(|t| (t.blend, t.write_mask)));
+        inner.depth_stencil = desc.depth_stencil;
+        inner.cull_mode = desc.primitive.cull_mode;
+        inner.front_face = desc.primitive.front_face;
 
         if !self
             .capabilities
