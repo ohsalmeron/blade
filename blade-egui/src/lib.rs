@@ -36,6 +36,16 @@ struct Locals {
     r_sampler: blade_graphics::Sampler,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod, blade_macros::Vertex)]
+struct GuiVertex {
+    pos: [f32; 2],
+    uv: [f32; 2],
+    color: u32,
+}
+
+const _: () = assert!(size_of::<GuiVertex>() == size_of::<egui::epaint::Vertex>());
+
 #[derive(Debug, PartialEq)]
 pub struct ScreenDescriptor {
     pub physical_size: (u32, u32),
@@ -173,32 +183,7 @@ impl GuiPainter {
         });
         let globals_layout = <Globals as blade_graphics::ShaderData>::layout();
         let locals_layout = <Locals as blade_graphics::ShaderData>::layout();
-        let egui_vertex_layout = blade_graphics::VertexLayout {
-            stride: 20, // egui::Vertex: pos(2xf32) + uv(2xf32) + color(u32) = 20
-            attributes: vec![
-                (
-                    "a_pos",
-                    blade_graphics::VertexAttribute {
-                        offset: 0,
-                        format: blade_graphics::VertexFormat::F32Vec2,
-                    },
-                ),
-                (
-                    "a_tex_coord",
-                    blade_graphics::VertexAttribute {
-                        offset: 8,
-                        format: blade_graphics::VertexFormat::F32Vec2,
-                    },
-                ),
-                (
-                    "a_color",
-                    blade_graphics::VertexAttribute {
-                        offset: 16,
-                        format: blade_graphics::VertexFormat::U32,
-                    },
-                ),
-            ],
-        };
+        let vertex_layout = <GuiVertex as blade_graphics::Vertex>::layout();
         // Fragment entry contract: Linear/sRGB-capable swapchains (Vulkan, Metal, EGL) use
         // `fs_main` (gamma→linear output). Plain UNORM surfaces (WebGL blit to HTML canvas)
         // use `fs_main_srgb` (gamma passthrough). WebGL is the only backend that reports
@@ -213,7 +198,7 @@ impl GuiPainter {
             data_layouts: &[&globals_layout, &locals_layout],
             vertex: shader.at("vs_main"),
             vertex_fetches: &[blade_graphics::VertexFetchState {
-                layout: &egui_vertex_layout,
+                layout: &vertex_layout,
                 instanced: false,
             }],
             primitive: blade_graphics::PrimitiveState {
@@ -421,9 +406,7 @@ impl GuiPainter {
                         r_sampler: texture.sampler,
                     },
                 );
-
                 pc.bind_vertex(0, vertex_buf);
-
                 pc.draw_indexed(
                     index_buf,
                     blade_graphics::IndexType::U32,
