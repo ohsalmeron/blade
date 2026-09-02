@@ -6,6 +6,9 @@ Changelog for *Blade* project
   created when the encoder recorded any, instead of being created and deleted
   on every submission. A submission without uniforms no longer allocates a GL
   object it never binds.
+- gles: upload BC compressed textures with `compressedTexSubImage`.
+  `texSubImage2D` with `type = GL_NONE` is invalid and left Kenney
+  colormaps (the start flag, car kit) black on WebGL/GLES.
 - vk: support `VK_EXT_external_memory_host` — enable the extension, query memory-type compatibility via `vkGetMemoryHostPointerPropertiesEXT`, and round allocation size to `minImportedHostPointerAlignment` so `Memory::External(HostAllocation)` imports succeed on drivers that expose the extension
 - gles: assign texture units to sampler uniforms where GLSL ES 3.00 can't carry explicit bindings, so multi-texture pipelines don't collide on unit 0 in WebGL2
 - gles: apply `RenderPipelineDesc::depth_stencil`, which the backend previously ignored, leaving draw order to decide visibility
