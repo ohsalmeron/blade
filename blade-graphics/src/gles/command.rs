@@ -957,6 +957,14 @@ impl super::Command {
                     gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
                     gl.pixel_store_i32(glow::PACK_ROW_LENGTH, row_texels as i32);
                     gl.bind_buffer(glow::PIXEL_PACK_BUFFER, None);
+                    // Attach the source to a private temporary FBO: the
+                    // currently-bound READ framebuffer may be the default
+                    // window framebuffer, which cannot take texture
+                    // attachments (the copy would silently read garbage).
+                    let mut prev_read = [0i32; 1];
+                    gl.get_integer_v(glow::READ_FRAMEBUFFER_BINDING, &mut prev_read);
+                    let tmp_fbo = gl.gen_framebuffer();
+                    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(tmp_fbo));
                     gl.framebuffer_texture_2d(
                         glow::READ_FRAMEBUFFER,
                         glow::COLOR_ATTACHMENT0,
@@ -977,12 +985,18 @@ impl super::Command {
                         format_desc.data_type,
                         glow::PixelPackData::Slice(Some(dst_slice)),
                     );
-                    gl.framebuffer_renderbuffer(
+                    gl.delete_framebuffer(tmp_fbo);
+                    gl.bind_framebuffer(
                         glow::READ_FRAMEBUFFER,
-                        glow::COLOR_ATTACHMENT0,
-                        glow::RENDERBUFFER,
-                        None,
+                        if prev_read[0] == 0 {
+                            None
+                        } else {
+                            Some(glow::NativeFramebuffer(
+                                glow::FramebufferHandle::from_gl_sys_handle(prev_read[0] as u32),
+                            ))
+                        },
                     );
+                    gl.pixel_store_i32(glow::PACK_ROW_LENGTH, 0);
                 }
                 Self::ResetFramebuffer => {
                     for &attachment in COLOR_ATTACHMENTS.iter() {
